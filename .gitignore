@@ -1,0 +1,19 @@
+# Images, tarballs, binaries — never commit
+*.tar
+*.tar.gz
+dist/
+out/
+
+# Secrets — generated on-box only
+.env
+secrets/
+*.pem
+
+# Dependencies
+node_modules/
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
