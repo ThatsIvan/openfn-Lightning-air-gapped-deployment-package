@@ -1,0 +1,172 @@
+
+networks:
+  backend: # internal only (no egress): worker + postgres cannot reach internet
+    driver: bridge
+    internal: true
+  frontend: # tye normal bridge web publishes its port to the host lan
+    driver: bridge
+
+
+volumes:
+  postgres_data:       # named volume docker manages ownership/perms
+  openfn_storage:      # Lightning local storage (dataclips, exports)
+
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_VERSION}
+    pull_policy: never
+    restart: unless-stopped
+    networks:
+      - backend
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1536m
+
+
+  migrate:
+    image: openfn/lightning:${VERSION}
+    pull_policy: never
+    networks:
+      - backend
+    command: ["/app/bin/migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      PRIMARY_ENCRYPTION_KEY: ${PRIMARY_ENCRYPTION_KEY}
+      WORKER_RUNS_PRIVATE_KEY: ${WORKER_RUNS_PRIVATE_KEY}
+      WORKER_SECRET: ${WORKER_SECRET}
+      MIX_ENV: prod
+      URL_HOST: ${URL_HOST:-localhost}
+      URL_PORT: ${URL_PORT:-4000}
+      URL_SCHEME: ${URL_SCHEME:-http}
+      ORIGINS: ${ORIGINS:-http://localhost:4000}
+      DISABLE_DB_SSL: "true"
+      USAGE_TRACKING_ENABLED: "false"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "1"
+
+  # --- Web (Lightning version) ---
+  web:
+    image: openfn/lightning:${VERSION}
+    pull_policy: never
+    restart: unless-stopped
+    networks:
+      - backend
+      - frontend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${LIGHTNING_PORT:-4000}:4000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      LISTEN_ADDRESS: ${LISTEN_ADDRESS:-0.0.0.0}
+      MIX_ENV: prod
+      NODE_ENV: production
+      PORT: "4000"
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      PRIMARY_ENCRYPTION_KEY: ${PRIMARY_ENCRYPTION_KEY}
+      URL_HOST: ${URL_HOST}
+      URL_PORT: ${URL_PORT:-4000}
+      URL_SCHEME: ${URL_SCHEME:-http}
+      ORIGINS: ${ORIGINS}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # --- Worker auth (Lightning side: private key + shared secret)
+      WORKER_RUNS_PRIVATE_KEY: ${WORKER_RUNS_PRIVATE_KEY}
+      WORKER_SECRET: ${WORKER_SECRET}
+      # --- Database ---
+      DISABLE_DB_SSL: "true"
+      # --- Telemetry OFF (sovereignty) ---
+      USAGE_TRACKING_ENABLED: "false"
+      # --- Mail ---
+      MAIL_PROVIDER: ${MAIL_PROVIDER:-local}
+      EMAIL_ADMIN: ${EMAIL_ADMIN:-admin@localhost}
+      # --- Adaptors (registry cache mounted from bundle) ---
+      ADAPTORS_REGISTRY_JSON_PATH: /app/priv/adaptor_registry_cache.json
+      SCHEMAS_PATH: ${SCHEMAS_PATH:-/app/priv/schemas}
+      # --- Hardening ---
+      ALLOW_SIGNUP: "false"
+      IS_RESETTABLE_DEMO: "false"
+      KAFKA_TRIGGERS_ENABLED: "false"
+    volumes:
+      - openfn_storage:/app/storage
+      - ./adaptor_registry_cache.json:/app/priv/adaptor_registry_cache.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4000/health_check"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 2560m
+
+  worker:
+    image: openfn/ws-worker:${WS_WORKER_VERSION}
+    pull_policy: never
+    restart: unless-stopped
+    networks:
+      - backend
+    depends_on:
+      web:
+        condition: service_healthy
+    command: ["pnpm", "start:prod"]
+    environment:
+      WORKER_LIGHTNING_SERVICE_URL: ws://web:4000/worker
+      WORKER_SECRET: ${WORKER_SECRET}
+      WORKER_LIGHTNING_PUBLIC_KEY: ${WORKER_LIGHTNING_PUBLIC_KEY}
+      WORKER_REPO_DIR: /worker-repo
+      WORKER_CAPACITY: ${WORKER_CAPACITY:-2}
+      WORKER_MAX_RUN_MEMORY_MB: ${WORKER_MAX_RUN_MEMORY_MB:-256}
+      WORKER_MAX_RUN_DURATION_SECONDS: ${WORKER_MAX_RUN_DURATION_SECONDS:-300}
+      WORKER_LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+    volumes:
+      - ./adaptors:/worker-repo
+    expose:
+      - "2222"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1536m
