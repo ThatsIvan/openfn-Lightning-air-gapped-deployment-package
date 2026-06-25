@@ -162,7 +162,7 @@ else
         WAITED=$((WAITED + 5))
         # Check worker logs for job completion (console.log output goes to
         # Lightning's run log, not Docker stdout — so look for the completion marker)
-        if docker compose logs worker --tail=50 2>/dev/null | grep -q "canary-job completed"; then
+        if docker compose logs worker --tail=100 2>/dev/null | grep -q "canary-job completed"; then
           CANARY_PASSED=true
           break
         fi
@@ -172,7 +172,7 @@ else
         ok "Canary run completed — adaptor executed offline successfully"
       else
         # Check if there was an autoinstall failure (adaptor not pre-staged)
-        if docker compose logs worker --tail=50 2>/dev/null | grep -q "autoinstalling\|module not found"; then
+        if docker compose logs worker --tail=100 2>/dev/null | grep -q "autoinstalling\|module not found"; then
           fail "Canary run failed — adaptor not pre-staged correctly"
           echo "       Check: docker compose logs worker --tail=50"
         else
