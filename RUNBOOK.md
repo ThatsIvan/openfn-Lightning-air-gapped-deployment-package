@@ -206,15 +206,18 @@ token verification failed
 worker. This happens if `.env` was hand-edited and a key was changed for only
 one service.
 
-**Fix:**
+**Fix:** Rotate only the worker auth keys — this leaves your database password and
+encryption key untouched (no data loss risk):
 ```bash
-# Regenerate all secrets (this resets everything)
-bash server-scripts/02-generate-secrets.sh
-docker compose down
+bash server-scripts/02-generate-secrets.sh --rotate-worker-keys
 docker compose up -d
-# Re-verify
 bash server-scripts/05-verify.sh
 ```
+
+**WARNING:** Do NOT regenerate all secrets on a running system. The Postgres
+password is baked into the database volume at first init, and the encryption key
+protects every stored credential. Regenerating either one breaks the database or
+makes stored credentials unrecoverable.
 
 ---
 
@@ -280,22 +283,30 @@ that `./adaptors` exists relative to `docker-compose.yml` and contains
 
 ### General recovery steps
 
-If none of the above patterns match:
+If none of the above patterns match, try these in order (least destructive first):
 ```bash
-# See ALL recent logs
+# 1. See ALL recent logs
 docker compose logs --tail=200
 
-# Restart just the worker
+# 2. Restart just the worker
 docker compose restart worker
 
-# Full restart
+# 3. Full restart (keeps all data)
 docker compose down && docker compose up -d
 
-# Nuclear option: regenerate secrets and start fresh
-# WARNING: this resets all secrets — existing workflows keep their data
-# but you'll need to recreate the admin user
-bash server-scripts/02-generate-secrets.sh
-docker compose down -v  # removes volumes — ALL DATA LOST
+# 4. Worker auth mismatch — rotate only worker keys (safe, no data loss)
+bash server-scripts/02-generate-secrets.sh --rotate-worker-keys
+docker compose up -d
+bash server-scripts/05-verify.sh
+```
+
+**LAST RESORT — destroys ALL data (projects, workflows, credentials, users):**
+
+Only use this if the database itself is corrupt or you need a completely fresh start.
+This is NOT the fix for worker auth issues — use `--rotate-worker-keys` above instead.
+```bash
+docker compose down -v                            # removes ALL volumes — DATA LOST
+bash server-scripts/02-generate-secrets.sh --reset-all  # safe now: no volume exists
 docker compose up -d
 bash server-scripts/04-create-admin.sh
 bash server-scripts/05-verify.sh
