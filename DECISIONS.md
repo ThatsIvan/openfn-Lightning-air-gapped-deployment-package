@@ -6,12 +6,17 @@
 - **Docker Engine + Compose v2** present (`docker compose`, not `docker-compose`)
 - **HTTP on LAN, no TLS termination** in scope: the server sits on an internal
   ministry LAN with no internet. TLS would require certificate management on an
-  offline box (self-signed + trust distribution or internal CA), complexity not
+  offline box (self signed + trust distribution or internal CA), complexity not
   justified for a single site LAN deployment. Stated as a future enhancement 
-- **DHIS2 is the primary target system** — standard for health-information systems.
-  Pre-staged adaptors include `language-dhis2`, `language-http`, `language-common`.
-- **One server, one operator, infrequent updates** — design point for every
-  decision below. We flag the pivot points where scale changes the answer.
+- **DHIS2 is the primary target system** — a Ministry of Health typically uses OpenFn
+  to integrate facility/health data with DHIS2, which is why DHIS2 is the adaptor 
+  I'm assuming is needed and pre stage. standard for health-information systems.
+  Inn addition, other Pre-staged adaptors include `language-dhis2`, `language-http`, 
+  and `language-common`.
+- **One server, one operator, infrequent updates** - Assuming number of sites tp deploy, N=1
+  entire design assumes we're deploying to one single server at one Ministry of Health. 
+  Every decision (docker save/load, openssl secrets on-box, manual USB transfer, systemd timer 
+  instead of Prometheus) is justified given this assumption
 
 ---
 
@@ -19,12 +24,12 @@
 
 **Decision:** Ship images as a single `images.tar` archive via `docker save`,
 loaded on the target with `docker load`. Pin all images by tag and record
-digests in `manifest.txt` for verification. Every compose service sets
-`pull_policy: never`.
+digests in `manifest.txt` for easy verification. Every compose service sets
+`pull_policy: never` to avoid any image lookup over the internet.
 
 **Why, for N=1:**
 - `docker save`/`load` is Docker's native air-gap primitive. Zero configuration
-  on the target — the admin runs one command and images are available.
+  on the target: the admin runs one command and images are available.
 - A registry (Harbor, `distribution`, Zot) is itself a service to run, store,
   secure (TLS), debug, and back up. For one server that receives updates
   a few times a year, that's pure overhead.
@@ -32,8 +37,8 @@ digests in `manifest.txt` for verification. Every compose service sets
   within the tarball.
 
 **Trade-off we accept:**
-- `docker save` encodes layers per-image; no cross-version layer dedup. A
-  patch upgrade (v2.16.7→v2.16.8) re-transfers the full Lightning image
+- `docker save` encodes layers per-image; no cross version layer dedup. A
+  patch upgrade (v2.16. to v2.16.8) re transfers the full Lightning image
   (~1.2 GB) even if only one layer changed. For a single site with USB/scp
   transfer, this is acceptable.
 - Manual steps: the admin must extract, load, bump the version in `.env`, and
@@ -46,8 +51,8 @@ digests in `manifest.txt` for verification. Every compose service sets
 - On each site, run a local registry. `docker compose pull` works natively once
   compose points at the internal registry.
 - Gains: incremental layer sync, `docker pull` workflow, simpler update script.
-- Cost: registry operation, TLS for registry (even self-signed), storage, and
-  a registry seeding workflow.
+- Cost: registry operation, TLS for registry (even self-signed), storage(images and harbor metadata), 
+  a separate postgres instance(in case we choose harbor), and a registry seeding workflow
 
 ---
 
@@ -67,12 +72,12 @@ bundle, never on the jump host.
 
 **Rotation costs per secret:**
 
-| Secret | Rotation impact | Procedure                                   |
-|--------|----------------|---------------------------------------------|
-| `POSTGRES_PASSWORD` | Update `DATABASE_URL` in `.env`, restart all services | Low risk — brief downtime                   |
-| `SECRET_KEY_BASE` | Invalidates all active Phoenix sessions everyone logged out | Low risk: users reauthenticate              |
-| `WORKER_SECRET` | Worker can't authenticate until both web + worker have the new value | Coordinate: update `.env`, restart both     |
-| `WORKER_RUNS_PRIVATE_KEY` + `WORKER_LIGHTNING_PUBLIC_KEY` | Regenerate keypair, update both vars, restart both services | Same as above                               |
+| Secret | Rotation impact                                                                                                                                                                             | Procedure                                   |
+|--------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------|
+| `POSTGRES_PASSWORD` | Update `DATABASE_URL` requires an ALTER USER statement not a `.env`, and postgres services                                                                                                  | Low risk — brief downtime                   |
+| `SECRET_KEY_BASE` | Invalidates all active Phoenix sessions everyone logged out                                                                                                                                 | Low risk: users reauthenticate              |
+| `WORKER_SECRET` | Worker can't authenticate until both web + worker have the new value                                                                                                                        | Coordinate: update `.env`, restart both     |
+| `WORKER_RUNS_PRIVATE_KEY` + `WORKER_LIGHTNING_PUBLIC_KEY` | Regenerate keypair, update both vars, restart both services                                                                                                                                 | Same as above                               |
 | **`PRIMARY_ENCRYPTION_KEY`** | **DO NOT casually rotate.** All stored credentials (DHIS2 passwords, OAuth tokens) are encrypted with this key. Rotation requires re-encrypting every credential. **Loss = unrecoverable.** | Back up `.env` to a secure offline location |
 
 **At 20 deployments:** Central per-site secret generation with secrets encrypted
@@ -83,7 +88,7 @@ store (Vault, AWS Secrets Manager) since sites have no egress.
 
 ---
 
-## 3. Updates: v2.16.7 → v2.20 in 6 months
+## 3. Updates: v2.16.7 to v2.20 in 6 months
 
 **General offline update loop:**
 1. On the jump host: rebuild the bundle with the new version
@@ -97,12 +102,12 @@ store (Vault, AWS Secrets Manager) since sites have no egress.
    The `migrate` service runs any new Ecto migrations.
 7. Run `05-verify.sh` to confirm the canary still passes.
 
-**Patch upgrade (v2.16.7 → v2.16.8):**
+**Patch upgrade (v2.16.7 to v2.16.8):**
 - Usually no breaking migrations or new env vars.
 - Low risk. Rollback: revert `VERSION` in `.env`, restart. The old image is
   still loaded from the previous `docker load`.
 
-**Minor upgrade (v2.16 → v2.17):**
+**Minor upgrade (v2.16 to v2.17):**
 - **`pg_dump` first** — always. Schema migrations are not trivially reversible.
 - Read the CHANGELOG for new/renamed env vars and breaking changes.
 - Rollback may require a database **restore** from the pre-upgrade dump if
