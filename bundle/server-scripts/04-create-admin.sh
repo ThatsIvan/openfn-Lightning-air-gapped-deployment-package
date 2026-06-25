@@ -45,32 +45,27 @@ echo "Creating superuser..."
 # setup_user pops :role from the map; if role == :superuser,
 # it calls Accounts.register_superuser which uses
 # superuser_registration_changeset → put_change(:role, :superuser).
-docker compose exec -T \
-  -e ADMIN_EMAIL="${ADMIN_EMAIL}" \
-  -e ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
-  web /app/bin/lightning eval '
-    email = System.get_env("ADMIN_EMAIL")
-    password = System.get_env("ADMIN_PASSWORD")
+# Use rpc (not eval) to run against the live BEAM node which has Repo started.
+# Inline credentials since rpc can't see env vars passed via docker exec -e.
+docker compose exec -T web /app/bin/lightning rpc "
     result = Lightning.Setup.setup_user(%{
       role: :superuser,
-      email: email,
-      first_name: "Admin",
-      last_name: "User",
-      password: password
+      email: \"${ADMIN_EMAIL}\",
+      first_name: \"Admin\",
+      last_name: \"User\",
+      password: \"${ADMIN_PASSWORD}\"
     })
     case result do
       {:ok, _, _} ->
-        IO.puts("SUCCESS: Superuser #{email} created.")
+        IO.puts(\"SUCCESS: Superuser created.\")
       {:ok, :ok} ->
-        IO.puts("SUCCESS: Superuser #{email} created.")
+        IO.puts(\"SUCCESS: Superuser created.\")
       {:error, reason} ->
-        IO.puts("FAIL: #{inspect(reason)}")
-        System.halt(1)
+        IO.puts(\"FAIL: #{inspect(reason)}\")
       other ->
-        IO.puts("Unexpected result: #{inspect(other)}")
-        System.halt(1)
+        IO.puts(\"Unexpected result: #{inspect(other)}\")
     end
-  '
+  "
 
 echo ""
 echo "==========================="
