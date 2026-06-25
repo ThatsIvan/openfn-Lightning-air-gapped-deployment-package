@@ -67,24 +67,24 @@ echo "--- Pre-staging adaptors ---"
 ADAPTORS_DIR="${BUILD_DIR}/adaptors"
 mkdir -p "${ADAPTORS_DIR}"
 
-# Use the ws-worker container (has node+npm) to install the CLI and adaptors
-# into the repo dir with the correct aliased layout.
+# Install adaptors with npm aliases matching the ws-worker's expected layout.
+# The worker resolves e.g. @openfn/language-common@3.3.3 to the directory
+# node_modules/@openfn/language-common_3.3.3 (underscore + version suffix).
 docker run --rm ${PLATFORM_FLAG} \
   -v "${ADAPTORS_DIR}:/repo" \
   --entrypoint sh \
   "${WORKER_IMAGE}" \
   -c "
-    npm install -g @openfn/cli@${OPENFN_CLI_VERSION} 2>&1 && \
-    openfn repo install \
-      -d /repo \
-      -a common@${ADAPTOR_COMMON_VERSION} \
-      -a http@${ADAPTOR_HTTP_VERSION} \
-      -a dhis2@${ADAPTOR_DHIS2_VERSION} \
+    cd /repo && \
+    npm install --save \
+      '@openfn/language-common_${ADAPTOR_COMMON_VERSION}@npm:@openfn/language-common@${ADAPTOR_COMMON_VERSION}' \
+      '@openfn/language-http_${ADAPTOR_HTTP_VERSION}@npm:@openfn/language-http@${ADAPTOR_HTTP_VERSION}' \
+      '@openfn/language-dhis2_${ADAPTOR_DHIS2_VERSION}@npm:@openfn/language-dhis2@${ADAPTOR_DHIS2_VERSION}' \
       2>&1
   "
 
 echo "Adaptors installed. Repo dir contents:"
-ls -la "${ADAPTORS_DIR}/"
+ls -la "${ADAPTORS_DIR}/node_modules/@openfn/" 2>/dev/null || echo "(no node_modules yet)"
 
 # Drop .npmrc pitfall, if autoinstall fires for an un-staged adaptor,
 # npm hits a dead socket and fails in ~3s instead of hanging
