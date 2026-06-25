@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenFn Lightning health check
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/openfn
+ExecStart=/opt/openfn/server-scripts/healthcheck.sh
+User=root
